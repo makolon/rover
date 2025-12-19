@@ -205,21 +205,32 @@ def get_state_annotation(
     current_frame_idx = frame_idx_list_ds[current_downsample_idx]
     prev_frame_idx = frame_idx_list_ds[prev_downsample_idx]
 
+    # Bounds checking for full-resolution arrays
+    if current_frame_idx >= len(gripper_target_dist_list) or prev_frame_idx >= len(gripper_target_dist_list):
+        raise IndexError(
+            f"Frame indices ({current_frame_idx}, {prev_frame_idx}) exceed gripper_target_dist_list length ({len(gripper_target_dist_list)})"
+        )
+    if current_frame_idx >= len(env_dist_list) or prev_frame_idx >= len(env_dist_list):
+        raise IndexError(
+            f"Frame indices ({current_frame_idx}, {prev_frame_idx}) exceed env_dist_list length ({len(env_dist_list)})"
+        )
+
     cur_gtd = gripper_target_dist_list[current_frame_idx]
     prev_gtd = gripper_target_dist_list[prev_frame_idx]
 
     cur_env = env_dist_list[current_frame_idx]
     prev_env = env_dist_list[prev_frame_idx]
 
-    cur_touch = obj_is_touching_gripper_list[current_frame_idx] if obj_is_touching_gripper_list is not None else None
-    prev_touch = obj_is_touching_gripper_list[prev_frame_idx] if obj_is_touching_gripper_list is not None else None
+    cur_touch = obj_is_touching_gripper_list[current_frame_idx] if obj_is_touching_gripper_list is not None and current_frame_idx < len(obj_is_touching_gripper_list) else None
+    prev_touch = obj_is_touching_gripper_list[prev_frame_idx] if obj_is_touching_gripper_list is not None and prev_frame_idx < len(obj_is_touching_gripper_list) else None
     _ = prev_touch  # can be used for hysteresis if needed
 
     # Some tasks do not define "only touching gripper" meaningfully
     allow_only_touch = task.split("-")[0] not in ["MicrowaveThawing", "RestockPantry", "ArrangeVegetables", "PrepareCoffee", "PreSoakPan"]
     cur_only_touch = None
     if allow_only_touch and obj_is_only_touching_gripper_list is not None and len(obj_is_only_touching_gripper_list) > 0:
-        cur_only_touch = obj_is_only_touching_gripper_list[current_frame_idx]
+        if current_frame_idx < len(obj_is_only_touching_gripper_list):
+            cur_only_touch = obj_is_only_touching_gripper_list[current_frame_idx]
 
     obj = get_obj_name(task_description, task)
 

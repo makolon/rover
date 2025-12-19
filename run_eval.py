@@ -207,6 +207,48 @@ def get_perturb_info(perturb_info_file: str) -> Tuple[Any, ...]:
                     raw = raw[1:-1]
                     obj_is_only_touching_gripper_list = [x for x in raw.split(", ") if x]
 
+    # Load from external files if they exist and data wasn't loaded from pertub_info.txt
+    perturb_dir = os.path.dirname(perturb_info_file)
+    
+    if not gripper_target_dist_list:
+        gtd_file = os.path.join(perturb_dir, "gripper_target_dist_list.txt")
+        if os.path.exists(gtd_file):
+            with open(gtd_file, "r") as f:
+                raw = f.read().strip()
+                if raw.startswith("[") and raw.endswith("]"):
+                    raw = raw[1:-1]
+                gripper_target_dist_list = [float(x.strip()) for x in raw.split(",") if x.strip()]
+    
+    if not env_dist_list:
+        env_file = os.path.join(perturb_dir, "env_dist_list.txt")
+        if os.path.exists(env_file):
+            with open(env_file, "r") as f:
+                raw = f.read().strip()
+                if raw.startswith("[") and raw.endswith("]"):
+                    raw = raw[1:-1]
+                env_dist_list = [float(x.strip()) for x in raw.split(",") if x.strip()]
+    
+    if not step_label_list:
+        step_file = os.path.join(perturb_dir, "step_label.txt")
+        if os.path.exists(step_file):
+            with open(step_file, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        step_label_list.append(line)
+    
+    if obj_is_touching_gripper_list is None:
+        touch_file = os.path.join(perturb_dir, "obj_is_touching_gripper_list.txt")
+        if os.path.exists(touch_file):
+            with open(touch_file, "r") as f:
+                obj_is_touching_gripper_list = [line.strip() for line in f if line.strip()]
+    
+    if obj_is_only_touching_gripper_list is None:
+        only_touch_file = os.path.join(perturb_dir, "obj_is_only_touching_gripper_list.txt")
+        if os.path.exists(only_touch_file):
+            with open(only_touch_file, "r") as f:
+                obj_is_only_touching_gripper_list = [line.strip() for line in f if line.strip()]
+
     return (
         idx_start, idx_final, idx_start_contact, idx_contact,
         idx_start_contact_expert, idx_contact_expert,
