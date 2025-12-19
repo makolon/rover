@@ -57,16 +57,34 @@ def load_prompt() -> Tuple[str, ...]:
     return tuple(prompts_dict[k] for k in keys)
 
 
-def encode_image(image_path: str) -> str:
+def encode_image(image_path: str, max_size: int = 512, quality: int = 85) -> str:
     """
     Encode the left half of an image as base64 string.
+    Resizes image to reduce token usage for API calls.
+    
+    Args:
+        image_path: Path to the image file
+        max_size: Maximum dimension (width or height) in pixels
+        quality: JPEG quality (1-95, lower = smaller file)
     """
     with Image.open(image_path) as img:
         width, height = img.size
         left_half = img.crop((0, 0, width // 2, height))
+        
+        # Resize if image is too large
+        left_width, left_height = left_half.size
+        if left_width > max_size or left_height > max_size:
+            if left_width > left_height:
+                new_width = max_size
+                new_height = int(left_height * (max_size / left_width))
+            else:
+                new_height = max_size
+                new_width = int(left_width * (max_size / left_height))
+            left_half = left_half.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        
         buffered = io.BytesIO()
-        fmt = img.format or "JPEG"
-        left_half.save(buffered, format=fmt)
+        # Force JPEG format with compression
+        left_half.convert('RGB').save(buffered, format='JPEG', quality=quality, optimize=True)
         buffered.seek(0)
         return base64.b64encode(buffered.read()).decode("utf-8")
 
@@ -192,13 +210,73 @@ def rover(
         else:
             response = gemini_model.generate_content(
                 messages_content,
-                generation_config=genai.GenerationConfig(max_output_tokens=100, temperature=0, top_k=1),
+                generation_config=genai.GenerationConfig(max_output_tokens=2048, temperature=0, top_k=1),
             )
             d = response.to_dict()
-            response_text = d["candidates"][0]["content"]["parts"][0]["text"]
+            
+            # Safely extract response text with error handling
+            if "candidates" in d and len(d["candidates"]) > 0:
+                candidate = d["candidates"][0]
+                finish_reason = candidate.get("finish_reason", "UNKNOWN")
+                finish_reason_names = {
+                    0: "FINISH_REASON_UNSPECIFIED",
+                    1: "STOP",
+                    2: "MAX_TOKENS",
+                    3: "SAFETY",
+                    4: "RECITATION",
+                    5: "OTHER"
+                }
+                finish_reason_name = finish_reason_names.get(finish_reason, f"UNKNOWN({finish_reason})")
+                
+                if "content" in candidate and "parts" in candidate["content"]:
+                    parts = candidate["content"]["parts"]
+                    if len(parts) > 0 and "text" in parts[0]:
+                        response_text = parts[0]["text"]
+                    else:
+                        print(f"Warning: Empty parts in response at frame {current_idx}")
+                        print(f"Finish reason: {finish_reason_name}")
+                        print(f"Candidate: {candidate}")
+                        response_text = ""
+                else:
+                    print(f"Warning: No content/parts in candidate at frame {current_idx}")
+                    print(f"Finish reason: {finish_reason_name}")
+                    print(f"Candidate: {candidate}")
+                    response_text = ""
+            else:
+                print(f"Warning: No candidates in response at frame {current_idx}")
+                print(f"Response dict: {d}")
+                response_text = ""
 
         response_text_list.append(response_text)
         print(current_idx)
+        
+        # Handle empty responses to avoid infinite loops
+        if not response_text or response_text.strip() == "":
+            print(f"Warning: Empty response at frame {current_idx}, skipping to next frame")
+            current_idx += 1
+            if current_idx < len(frame_file_list):
+                base64_image_prev = base64_image_current
+                base64_image_current = encode_image(frame_file_list[current_idx])
+                # Rebuild messages for next frame
+                if "gpt" in model_name:
+                    messages_content = [
+                        {"type": "text", "text": prompt0},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image0}", "detail": "high"}},
+                        {"type": "text", "text": prompt_image0_append},
+                        {"type": "text", "text": prompt_image_current_prepend},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image_current}", "detail": "high"}},
+                    ]
+                else:
+                    messages_content = [
+                        prompt0,
+                        {"mime_type": "image/jpeg", "data": base64_image0},
+                        prompt_image0_append,
+                        prompt_image_current_prepend,
+                        {"mime_type": "image/jpeg", "data": base64_image_current},
+                    ]
+                continue
+            else:
+                return current_idx, subtask_list, subtask_progress_list, subtask_frame_descriptions_list, base64_image_current
 
         # Case A: progress estimate
         if "completion percentage: " in response_text:
@@ -377,7 +455,7 @@ def depth_first_traverse_rover_output_structure(subtask_list_i, subtask_progress
     adjusted_progress_list = []
 
     for subtask_idx in range(len(subtask_list_i)):
-        print(layer_tag)
+        print("Layer Tag:", layer_tag)
         print(indent_str + str(subtask_list_i[subtask_idx][0]))
         print(indent_str + f"subtask_count: {subtask_count}")
 

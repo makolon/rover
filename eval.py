@@ -707,19 +707,6 @@ def eval_video_qa(
     y_true_bin: List[int] = []
     y_true_frame: List[int | str] = []
 
-    # NOTE:
-    # Your original code had sophisticated per-task ground truth time rules.
-    # Here we keep your classification logic via get_groundtruth_qa(),
-    # and for the frame number we require you to supply the "groundtruth_idx" rules externally
-    # OR keep your original get_groundtruth_frame_number logic in your codebase.
-    #
-    # To avoid inventing new time rules incorrectly, we do:
-    # - If groundtruth is 0 -> frame 'NA'
-    # - If groundtruth is 1 -> we approximate earliest as idx_start_contact_i (if available) else 'NA'
-    #
-    # If you want exact replication, you should plug in your original task-specific
-    # `groundtruth_idx = ...` rules and pass them here.
-
     for step_template in steps:
         # Fill step template with object/location when needed
         step_text = step_template

@@ -16,19 +16,21 @@ from rover_model import rover, process_rover_output, build_openai_client, build_
 # -----------------------------
 # Configuration
 # -----------------------------
-dataset_dir = "./test_video/"
+dataset_dir = "./data"
 api_key = os.environ.get("API_KEY", None)  # Prefer environment variable over hard-coding
 method = "rover"
 model_name = "gemini-robotics-er-1.5-preview"
 task = "PnPCounterToCab"
 camera_view = "external"
 downsample_to = 30
-max_episodes = 2  # Your original code effectively evaluated 2 episodes
-level_filter_substring = "lev6"  # Your code filtered by 'lev6' inside the loop; keep it explicit
+max_episodes = 1  # Your original code effectively evaluated 2 episodes
+level_filter_substring = "lev2"  # Empty string means no filtering
 
 if api_key is None:
     raise ValueError("API key is missing. Set API_KEY env var or assign `api_key` directly.")
 
+openai_client = None
+gemini_model = None
 if "gpt" in model_name:
     openai_client = build_openai_client(api_key)
 elif "gemini" in model_name:
