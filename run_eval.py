@@ -9,6 +9,7 @@ from eval import (
     eval_frame_level_progress_prediction,
     eval_frame_level_reasoning,
     eval_video_qa,
+    LLMCaller,
 )
 from rover_model import rover, process_rover_output, build_openai_client, build_gemini_model
 
@@ -37,6 +38,13 @@ elif "gemini" in model_name:
     gemini_model = build_gemini_model(model_name, api_key)
 else:
     raise ValueError(f"Unsupported model_name: {model_name}")
+
+# Create LLMCaller for evaluation functions
+llm_caller = LLMCaller(
+    model_name=model_name,
+    openai_client=openai_client,
+    gemini_model=gemini_model,
+)
 
 
 # -----------------------------
@@ -299,11 +307,45 @@ for episode_dir in episode_dir_list:
     # Eval task 1
     corr, dist = eval_frame_level_progress_prediction(gt_progress_list, final_progress_list)
 
-    # Eval task 2
-    error_rate, success_rate, inconclusive_rate = eval_frame_level_reasoning(frame_descriptions_list)
+    # Eval task 2 - skip if not enough data
+    try:
+        error_rate, success_rate, inconclusive_rate = eval_frame_level_reasoning(
+            frame_descriptions_list,
+            llm_caller,
+            task_description=task_description_i,
+            level_i=os.path.basename(episode_dir),
+            task=task,
+            idx_start_contact=idx_start_contact_i,
+            idx_contact=idx_contact_i,
+            step_label_list_ds=step_label_list_i,
+            frame_idx_list_ds=frame_indices,
+            gripper_target_dist_list=gripper_target_dist_list_i,
+            env_dist_list=env_dist_list_i,
+            obj_is_touching_gripper_list=obj_is_touching_gripper_list_i,
+            obj_is_only_touching_gripper_list=obj_is_only_touching_gripper_list_i,
+        )
+    except Exception as e:
+        print(f"Warning: eval_frame_level_reasoning failed: {e}")
+        error_rate, success_rate, inconclusive_rate = 0.0, 0.0, 0.0
 
-    # Eval task 3
-    qa_accuracy, qa_precision, qa_recall, qa_frame_diff = eval_video_qa(frame_descriptions_list)
+    # Eval task 3 - skip if not enough data
+    try:
+        qa_accuracy, qa_precision, qa_recall, qa_frame_diff = eval_video_qa(
+            frame_descriptions_list,
+            llm_caller,
+            task_description=task_description_i,
+            task=task,
+            level_i=os.path.basename(episode_dir),
+            frame_idx_list_ds=frame_indices,
+            idx_final_i=idx_final_i,
+            idx_start_contact_i=idx_start_contact_i,
+            idx_contact_i=idx_contact_i,
+            idx_start_contact_expert_i=idx_start_contact_expert_i,
+            idx_contact_expert_i=idx_contact_expert_i,
+        )
+    except Exception as e:
+        print(f"Warning: eval_video_qa failed: {e}")
+        qa_accuracy, qa_precision, qa_recall, qa_frame_diff = 0.0, 0.0, 0.0, 0.0
 
     results.append(
         {

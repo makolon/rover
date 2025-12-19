@@ -248,7 +248,7 @@ def rover(
                 response_text = ""
 
         response_text_list.append(response_text)
-        print(current_idx)
+        print("Current Index:", current_idx)
         
         # Handle empty responses to avoid infinite loops
         if not response_text or response_text.strip() == "":
@@ -294,8 +294,8 @@ def rover(
             frame_description_list.append(current_frame_description)
             progress_list.append(current_progress)
 
-            print(current_frame_description)
-            print(current_progress)
+            print("Current Frame Description:", current_frame_description)
+            print("Current Progress:", current_progress)
 
             current_idx += 1
 
@@ -338,7 +338,7 @@ def rover(
                         {"mime_type": "image/jpeg", "data": base64_image_current},
                     ]
             else:
-                print(progress_list)
+                print("Progress List:", progress_list)
                 return current_idx, subtask_list, progress_list, frame_description_list, base64_image_current
 
         # Case B: decomposition request

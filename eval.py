@@ -328,7 +328,7 @@ LLM_EVAL2_QUESTION_TEMPLATE = (
     "Below is the description of a frame within that video, along with ground truth information about the robot "
     "and environment state at that frame. Given the ground truth information, your task is to determine the accuracy "
     "of the frame description. Please classify the frame description as True, False, or Inconclusive. "
-    "Please end your response with 'Final Answer: {final_classification}'."
+    "Please end your response with 'Final Answer: True/False/Inconclusive'."
 )
 
 
@@ -695,6 +695,10 @@ def eval_video_qa(
     # Build concatenated frame descriptions
     # We keep "Frame{i}: ..." format expected by your prompt.
     frame_concat_lines: List[str] = []
+    if len(frame_descriptions_list) < 2:
+        # Not enough frames to evaluate
+        return 0.0, "NA", "NA", "NA"
+    
     for i in range(1, len(frame_descriptions_list)):
         d = (frame_descriptions_list[i] or "").strip()
         d = d.split("escription: ")[-1].strip()  # keep your original normalization
