@@ -1,258 +1,340 @@
 import os
-import io
-import numpy as np
 import glob
-from PIL import Image
-import base64
-from openai import OpenAI
-import google.generativeai as genai
-import pandas as pd
+from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
+import pandas as pd
 
 from eval import (
     eval_frame_level_progress_prediction,
     eval_frame_level_reasoning,
-    eval_video_qa
+    eval_video_qa,
 )
-
-from rover_model import (
-    rover,
-    process_rover_output,
-)
-
-from gvl_model import (
-    gvl,
-    process_gvl_output,
-)
+from rover_model import rover, process_rover_output, build_openai_client, build_gemini_model
 
 
-# Download the dataset linked on the GitHub page and set the dataset_dir variable to the path where the dataset is stored
-dataset_dir = "/path/to/data/"
-
-# set api key
-API_KEY = ...
-
-
-method = 'rover'
-# method = 'gvl'
-
-model_name="gemini-1.5-pro"
-# model_name="gpt-4o"
-
-llm_evaluator_eval2_model_name=model_name
-llm_evaluator_eval3_model_name=model_name
-
-
-task="PnPCounterToCab"
-# task="OpenSingleDoor"
-# ...
-
-
-if 'gpt' in model_name:
-    client = OpenAI(api_key=API_KEY)
-elif 'gemini' in model_name:
-    genai.configure(api_key=API_KEY)
-    google_model = genai.GenerativeModel(model_name = model_name)
-
-
-def get_perturb_info(perturb_info_file):
-    idx_start, idx_final, idx_start_contact, idx_contact, idx_start_contact_expert, idx_contact_expert, task_description, dist_list, step_label_list, gripper_target_dist_list, env_dist_list, obj_is_touching_gripper_list, obj_is_only_touching_gripper_list = None, None, None, None, None, None, '', [], [], [], [], [], []
-    with open(perturb_info_file, 'r') as f:
-        lines = f.readlines()
-        for line in lines:
-            if 'idx_start:' in line:
-                idx_start = int(line.split(':')[-1].strip())
-                idx_start = idx_start
-            elif 'idx_final' in line:
-                idx_final = int(line.split(':')[-1].strip())
-                idx_final = idx_final
-            elif 'idx_start_contact:' in line:
-                if not 'None' in line:
-                    idx_start_contact = int(line.split(':')[-1].strip())
-                else:
-                    idx_start_contact = None
-                idx_start_contact = idx_start_contact
-            elif 'idx_contact:' in line:
-                if not 'None' in line:
-                    idx_contact = int(line.split(':')[-1].strip())
-                else:
-                    idx_contact = None
-                idx_contact = idx_contact
-            elif 'idx_start_contact_expert:' in line:
-                idx_start_contact_expert = int(line.split(':')[-1].strip())
-                idx_start_contact_expert = idx_start_contact_expert
-            elif 'idx_contact_expert:' in line:
-                idx_contact_expert = int(line.split(':')[-1].strip())
-                idx_contact_expert = idx_contact_expert
-            elif line.startswith("language"):
-                # Extract the value after the colon and strip whitespace
-                task_description = line.split(":")[1].strip().lower()
-            elif line.startswith('dist_list:'):
-                dist_list = line.split(': ')[-1].strip()
-                dist_list = dist_list[1:-1].split(', ')
-                dist_list = [float(x) for x in dist_list]
-                dist_list = dist_list
-            elif 'step_label' in line:
-                step_label_list = line.split(': ')[-1].strip()
-                step_label_list = step_label_list[1:-1].split(', ')
-                step_label_list = [x[1:-1] for x in step_label_list]
-                step_label_list = step_label_list
-            elif 'gripper_target_dist_list' in line:
-                gripper_target_dist_list = line.split(': ')[-1].strip()
-                gripper_target_dist_list = gripper_target_dist_list[1:-1].split(', ')
-                gripper_target_dist_list = [float(x) for x in gripper_target_dist_list]
-                gripper_target_dist_list = gripper_target_dist_list
-            elif 'env_dist_list' in line:
-                env_dist_list = line.split(': ')[-1].strip()
-                env_dist_list = env_dist_list[1:-1].split(', ')
-                env_dist_list = [float(x) for x in env_dist_list]
-                env_dist_list = env_dist_list
-            elif 'obj_is_touching_gripper_list' in line:
-                obj_is_touching_gripper_list = line.split(': ')[-1].strip()
-                if not 'None' in obj_is_touching_gripper_list:
-                    obj_is_touching_gripper_list = obj_is_touching_gripper_list[1:-1].split(', ')
-                    obj_is_touching_gripper_list = obj_is_touching_gripper_list
-                else:
-                    obj_is_touching_gripper_list=None
-            elif 'obj_is_only_touching_gripper_list' in line:
-                obj_is_only_touching_gripper_list = line.split(': ')[-1].strip()
-                if not 'None' in obj_is_only_touching_gripper_list:
-                    obj_is_only_touching_gripper_list = obj_is_only_touching_gripper_list[1:-1].split(', ')
-                    obj_is_only_touching_gripper_list = obj_is_only_touching_gripper_list
-                else:
-                    obj_is_only_touching_gripper_list=None
-    return idx_start, idx_final, idx_start_contact, idx_contact, idx_start_contact_expert, idx_contact_expert, task_description, dist_list, step_label_list, gripper_target_dist_list, env_dist_list, obj_is_touching_gripper_list, obj_is_only_touching_gripper_list
-
-
-
-episode_dir_list = glob.glob(f"{dataset_dir}/{task}/*")
-episode_dir_list = [x for x in episode_dir_list if not x.endswith('.mp4')]
-
-len(episode_dir_list)
+# -----------------------------
+# Configuration
+# -----------------------------
+dataset_dir = "./test_video/"
+api_key = os.environ.get("API_KEY", None)  # Prefer environment variable over hard-coding
+method = "rover"
+model_name = "gemini-robotics-er-1.5-preview"
+task = "PnPCounterToCab"
+camera_view = "external"
 downsample_to = 30
+max_episodes = 2  # Your original code effectively evaluated 2 episodes
+level_filter_substring = "lev6"  # Your code filtered by 'lev6' inside the loop; keep it explicit
 
-#### collect results for task 1
-progress_corr_list = []
-progress_dist_list = []
-#### collect results for task 2
-reasoning_error_rate_list = []
-reasoning_success_rate_list = []
-reasoning_inconclusive_rate_list = []
-#### collect results for task 3
-qa_accuracy_list = []
-qa_precision_list = []
-qa_recall_list = []
-qa_frame_diff_list = []
+if api_key is None:
+    raise ValueError("API key is missing. Set API_KEY env var or assign `api_key` directly.")
 
-if method == 'rover':
-    final_idx_list = []
-    subtask_list_list = []
-    subtask_progress_list_list = []
-    subtask_frame_descriptions_list_list = []
+if "gpt" in model_name:
+    openai_client = build_openai_client(api_key)
+elif "gemini" in model_name:
+    gemini_model = build_gemini_model(model_name, api_key)
+else:
+    raise ValueError(f"Unsupported model_name: {model_name}")
 
 
-gt_progress_list_list = []
-final_progress_list_list=[]
-frame_descriptions_list_list = []
-for episode_dir_idx in range(0,len(episode_dir_list[:2])):
-    episode_dir = episode_dir_list[episode_dir_idx]
-    #
-    episode_dir = [x for x in episode_dir_list if 'lev6' in x][episode_dir_idx]
-    print('\n\n\n\n\n*********************************')
-    print(episode_dir)
-    level_i = episode_dir.split('/')[-1].split('_')[-1].split('-')[0].split('.')[0]
-    demo_num_i = int(episode_dir.split('/')[-1].split('_demo_')[-1].split('_')[0])
-    # 
-    # 
-    ######################################################################################
-    frame_file_list_all= glob.glob(f"{episode_dir}/frames/frame_*.jpg")
-    len(frame_file_list_all)
-    # downsample to 30 frames
-    image_file_num_list_all = [x.split('/')[-1].split('_')[1].split('.')[0] for x in frame_file_list_all]
-    image_file_num_list_all = [int(x) for x in image_file_num_list_all]
-    image_file_num_list_all= sorted(image_file_num_list_all)
-    # 
-    image_file_num_list = np.linspace(0, image_file_num_list_all[-1], downsample_to).astype(int).tolist()
-    frame_file_list = [f"{episode_dir}/frames/frame_{x}.jpg" for x in image_file_num_list]
-    ######################################################################################
-    gt_progress_file = f'{episode_dir}/task_progress.txt'
-    gt_progress_list = []
-    with open(gt_progress_file, 'r') as f:
+# -----------------------------
+# Utilities
+# -----------------------------
+def parse_int_from_frame_path(path: str) -> int:
+    """Extract frame index from a path like .../frame_123.jpg."""
+    name = os.path.basename(path)
+    stem = name.split(".")[0]
+    idx_str = stem.split("_")[-1]
+    return int(idx_str)
+
+
+def make_downsampled_frame_list(frame_dir: str, downsample_to_: int) -> Tuple[List[str], List[int]]:
+    """
+    Build a downsampled list of frame paths and their corresponding integer indices.
+
+    Returns:
+        frame_file_list: list of paths, length ~= downsample_to_
+        frame_indices: list of frame numbers extracted from filenames, same length as frame_file_list
+    """
+    frame_file_list_all = glob.glob(os.path.join(frame_dir, "frame_*.jpg"))
+    if len(frame_file_list_all) == 0:
+        raise FileNotFoundError(f"No frames found under: {frame_dir}")
+
+    frame_nums_all = sorted(parse_int_from_frame_path(p) for p in frame_file_list_all)
+    max_frame_num = frame_nums_all[-1]
+
+    # Use linspace in the numeric frame-id space, then ensure uniqueness and sorting
+    chosen_nums = np.linspace(0, max_frame_num, downsample_to_).astype(int).tolist()
+    chosen_nums = sorted(set(chosen_nums))
+
+    frame_file_list = [os.path.join(frame_dir, f"frame_{n}.jpg") for n in chosen_nums]
+    # Filter out missing files (some datasets have sparse numbering)
+    frame_file_list = [p for p in frame_file_list if os.path.exists(p)]
+    frame_indices = [parse_int_from_frame_path(p) for p in frame_file_list]
+
+    if len(frame_file_list) < 2:
+        raise ValueError(f"Not enough frames after downsampling in: {frame_dir}")
+
+    return frame_file_list, frame_indices
+
+
+def load_gt_progress(gt_progress_file: str) -> List[float]:
+    """Load per-frame ground-truth progress from task_progress.txt."""
+    if not os.path.exists(gt_progress_file):
+        raise FileNotFoundError(f"GT progress file missing: {gt_progress_file}")
+
+    vals: List[float] = []
+    with open(gt_progress_file, "r") as f:
         for line in f:
-            if line.strip():
-                gt_progress_list.append(float(line.strip()))
-    # 
-    gt_progress_list = [round(x) for x in gt_progress_list]
-    gt_progress_list = [gt_progress_list[i] for i in image_file_num_list]
-    # 
-    len(frame_file_list)
-    len(gt_progress_list)
-    # 
-    perturb_info_file = f'{episode_dir}/pertub_info.txt'
-    idx_start_i, idx_final_i, idx_start_contact_i, idx_contact_i, idx_start_contact_expert_i, idx_contact_expert_i, task_description_i, dist_list_i, step_label_list_i, gripper_target_dist_list_i, env_dist_list_i, obj_is_touching_gripper_list_i, obj_is_only_touching_gripper_list_i = get_perturb_info(perturb_info_file)
-    ######################################################################################
-    if method == 'rover':
-        final_idx, subtask_list, subtask_progress_list, subtask_frame_descriptions_list, _ = rover(model_name, task_description_i, camera_view, frame_file_list)
-        final_progress_list, frame_descriptions_list = process_rover_output(subtask_list, subtask_progress_list, subtask_frame_descriptions_list)
-    elif method == 'gvl':
-        progress_list, frame_descriptions_list, image_file_num_list_idx_shuffled = gvl(model_name, task_description_i, camera_view, frame_file_list, image_file_num_list)
-        final_progress_list, frame_descriptions_list = process_gvl_output(progress_list, frame_descriptions_list, image_file_num_list_idx_shuffled)
-    len(final_progress_list), len(frame_descriptions_list)
-    # adding 0 for the initial frame
-    final_progress_list = [0] + final_progress_list
-    # adding empty string for the initial frame
-    frame_descriptions_list = [''] + frame_descriptions_list
-    # 
-    if method == 'rover':
-        final_idx_list.append(final_idx)
-        subtask_list_list.append(subtask_list)
-        subtask_progress_list_list.append(subtask_progress_list)
-        subtask_frame_descriptions_list_list.append(subtask_frame_descriptions_list)
-    # 
-    gt_progress_list_list.append(gt_progress_list)
-    final_progress_list_list.append(final_progress_list)
-    frame_descriptions_list_list.append(frame_descriptions_list)
-    ######################################################################################
-    # 
+            s = line.strip()
+            if s:
+                vals.append(float(s))
+    return vals
+
+
+def select_gt_progress(gt_all: List[float], frame_indices: List[int]) -> List[int]:
+    """
+    Select GT progress values corresponding to the chosen frame indices.
+
+    This assumes gt_all is indexed by the original frame number.
+    If that assumption does not hold in your dataset, adjust here.
+    """
+    max_needed = max(frame_indices)
+    if max_needed >= len(gt_all):
+        raise IndexError(
+            f"GT progress length ({len(gt_all)}) is smaller than max frame index ({max_needed}). "
+            "Your GT indexing convention likely differs; fix select_gt_progress()."
+        )
+
+    gt_selected = [gt_all[i] for i in frame_indices]
+    gt_selected = [int(round(x)) for x in gt_selected]
+    return gt_selected
+
+
+def get_perturb_info(perturb_info_file: str) -> Tuple[Any, ...]:
+    """
+    Parse perturbation info file.
+
+    Note: This function is kept compatible with your original return signature,
+    but the implementation is simplified and more defensive.
+    """
+    defaults = (
+        None, None, None, None, None, None,  # idx_start..idx_contact_expert
+        "",                                  # task_description
+        [], [], [], [],                      # dist_list, step_label_list, gripper_target_dist_list, env_dist_list
+        None, None,                          # obj_is_touching_gripper_list, obj_is_only_touching_gripper_list
+    )
+
+    if not os.path.exists(perturb_info_file):
+        return defaults
+
+    idx_start = idx_final = None
+    idx_start_contact = idx_contact = None
+    idx_start_contact_expert = idx_contact_expert = None
+    task_description = ""
+    dist_list: List[float] = []
+    step_label_list: List[str] = []
+    gripper_target_dist_list: List[float] = []
+    env_dist_list: List[float] = []
+    obj_is_touching_gripper_list: Optional[List[str]] = None
+    obj_is_only_touching_gripper_list: Optional[List[str]] = None
+
+    with open(perturb_info_file, "r") as f:
+        for line in f:
+            line = line.strip()
+
+            if line.startswith("idx_start:"):
+                idx_start = int(line.split(":")[-1].strip())
+            elif line.startswith("idx_final"):
+                idx_final = int(line.split(":")[-1].strip())
+            elif line.startswith("idx_start_contact:"):
+                val = line.split(":")[-1].strip()
+                idx_start_contact = None if val == "None" else int(val)
+            elif line.startswith("idx_contact:"):
+                val = line.split(":")[-1].strip()
+                idx_contact = None if val == "None" else int(val)
+            elif line.startswith("idx_start_contact_expert:"):
+                idx_start_contact_expert = int(line.split(":")[-1].strip())
+            elif line.startswith("idx_contact_expert:"):
+                idx_contact_expert = int(line.split(":")[-1].strip())
+            elif line.startswith("language"):
+                task_description = line.split(":", 1)[1].strip().lower()
+
+            elif line.startswith("dist_list:"):
+                raw = line.split(": ", 1)[1].strip()
+                raw = raw[1:-1]  # strip [ ]
+                dist_list = [float(x) for x in raw.split(", ") if x]
+
+            elif "step_label" in line:
+                raw = line.split(": ", 1)[1].strip()
+                raw = raw[1:-1]
+                # step labels are quoted strings in your original code
+                step_label_list = [x.strip()[1:-1] for x in raw.split(", ") if x.strip()]
+
+            elif line.startswith("gripper_target_dist_list"):
+                raw = line.split(": ", 1)[1].strip()
+                raw = raw[1:-1]
+                gripper_target_dist_list = [float(x) for x in raw.split(", ") if x]
+
+            elif line.startswith("env_dist_list"):
+                raw = line.split(": ", 1)[1].strip()
+                raw = raw[1:-1]
+                env_dist_list = [float(x) for x in raw.split(", ") if x]
+
+            elif line.startswith("obj_is_touching_gripper_list"):
+                raw = line.split(": ", 1)[1].strip()
+                if "None" in raw:
+                    obj_is_touching_gripper_list = None
+                else:
+                    raw = raw[1:-1]
+                    obj_is_touching_gripper_list = [x for x in raw.split(", ") if x]
+
+            elif line.startswith("obj_is_only_touching_gripper_list"):
+                raw = line.split(": ", 1)[1].strip()
+                if "None" in raw:
+                    obj_is_only_touching_gripper_list = None
+                else:
+                    raw = raw[1:-1]
+                    obj_is_only_touching_gripper_list = [x for x in raw.split(", ") if x]
+
+    return (
+        idx_start, idx_final, idx_start_contact, idx_contact,
+        idx_start_contact_expert, idx_contact_expert,
+        task_description,
+        dist_list, step_label_list, gripper_target_dist_list, env_dist_list,
+        obj_is_touching_gripper_list, obj_is_only_touching_gripper_list,
+    )
+
+
+# -----------------------------
+# Main evaluation loop
+# -----------------------------
+episode_dir_list = glob.glob(os.path.join(dataset_dir, task, "*"))
+episode_dir_list = [p for p in episode_dir_list if os.path.isdir(p)]
+episode_dir_list = sorted(episode_dir_list)
+
+# Apply the explicit level filter (your original code did this inside the loop and could crash)
+if level_filter_substring:
+    episode_dir_list = [p for p in episode_dir_list if level_filter_substring in os.path.basename(p)]
+
+if len(episode_dir_list) == 0:
+    raise FileNotFoundError(f"No episode directories found under: {os.path.join(dataset_dir, task)}")
+
+episode_dir_list = episode_dir_list[:max_episodes]
+
+results: List[Dict[str, Any]] = []
+
+# Optional: store extra rover outputs
+rover_artifacts: Dict[str, Any] = {
+    "final_idx_list": [],
+    "subtask_list_list": [],
+    "subtask_progress_list_list": [],
+    "subtask_frame_descriptions_list_list": [],
+    "gt_progress_list_list": [],
+    "final_progress_list_list": [],
+    "frame_descriptions_list_list": [],
+}
+
+for episode_dir in episode_dir_list:
+    print("\n" + "*" * 80)
+    print(f"Episode: {episode_dir}")
+
+    frame_dir = os.path.join(episode_dir, "frames")
+    frame_file_list, frame_indices = make_downsampled_frame_list(frame_dir, downsample_to)
+
+    gt_progress_file = os.path.join(episode_dir, "task_progress.txt")
+    gt_all = load_gt_progress(gt_progress_file)
+    gt_progress_list = select_gt_progress(gt_all, frame_indices)
+
+    perturb_info_file = os.path.join(episode_dir, "pertub_info.txt")  # Keeping dataset spelling
+    (
+        idx_start_i, idx_final_i, idx_start_contact_i, idx_contact_i,
+        idx_start_contact_expert_i, idx_contact_expert_i,
+        task_description_i,
+        dist_list_i, step_label_list_i, gripper_target_dist_list_i, env_dist_list_i,
+        obj_is_touching_gripper_list_i, obj_is_only_touching_gripper_list_i,
+    ) = get_perturb_info(perturb_info_file)
+
+    # Fallback if language line is missing
+    if not task_description_i:
+        task_description_i = task.lower()
+
+    # Run the selected method
+    if method == "rover":
+        # NOTE: This assumes rover_model.rover accepts injected clients (openai_client / gemini_model).
+        final_idx, subtask_list, subtask_progress_list, subtask_frame_descriptions_list, _ = rover(
+            model_name=model_name,
+            task_description_i=task_description_i,
+            camera_view=camera_view,
+            frame_file_list=frame_file_list,
+            openai_client=openai_client,
+            gemini_model=gemini_model,
+        )
+        final_progress_list, frame_descriptions_list = process_rover_output(
+            subtask_list=subtask_list,
+            subtask_progress_list=subtask_progress_list,
+            subtask_frame_descriptions_list=subtask_frame_descriptions_list,
+            frame_file_list=frame_file_list,
+        )
+    else:
+        raise ValueError(f"Unknown method: {method}")
+
+    # The rover post-processing returns per-frame predictions excluding the initial frame.
+    # Add the initial frame back to match GT length convention used in your eval.
+    final_progress_list = [0] + list(final_progress_list)
+    frame_descriptions_list = [""] + list(frame_descriptions_list)
+
+    # Basic sanity checks
+    if len(final_progress_list) != len(frame_file_list):
+        raise ValueError(
+            f"Pred progress length ({len(final_progress_list)}) != num frames ({len(frame_file_list)})."
+        )
+    if len(gt_progress_list) != len(frame_file_list):
+        raise ValueError(
+            f"GT progress length ({len(gt_progress_list)}) != num frames ({len(frame_file_list)})."
+        )
+
+    # Eval task 1
     corr, dist = eval_frame_level_progress_prediction(gt_progress_list, final_progress_list)
-    progress_corr_list.append(corr)
-    progress_dist_list.append(dist)
-    # 
+
+    # Eval task 2
     error_rate, success_rate, inconclusive_rate = eval_frame_level_reasoning(frame_descriptions_list)
-    reasoning_error_rate_list.append(error_rate)
-    reasoning_success_rate_list.append(success_rate)
-    reasoning_inconclusive_rate_list.append(inconclusive_rate)
-    # 
+
+    # Eval task 3
     qa_accuracy, qa_precision, qa_recall, qa_frame_diff = eval_video_qa(frame_descriptions_list)
-    qa_accuracy_list.append(qa_accuracy)
-    qa_precision_list.append(qa_precision)
-    qa_recall_list.append(qa_recall)
-    qa_frame_diff_list.append(qa_frame_diff)
+
+    results.append(
+        {
+            "episode_dir": os.path.basename(episode_dir),
+            "task": task,
+            "method": method,
+            "model_name": model_name,
+            "corr": corr,
+            "dist": dist,
+            "reasoning_error_rate": error_rate,
+            "reasoning_success_rate": success_rate,
+            "reasoning_inconclusive_rate": inconclusive_rate,
+            "qa_accuracy": qa_accuracy,
+            "qa_precision": qa_precision,
+            "qa_recall": qa_recall,
+            "qa_frame_diff": qa_frame_diff,
+        }
+    )
+
+    # Save artifacts if rover is used
+    if method == "rover":
+        rover_artifacts["final_idx_list"].append(final_idx)
+        rover_artifacts["subtask_list_list"].append(subtask_list)
+        rover_artifacts["subtask_progress_list_list"].append(subtask_progress_list)
+        rover_artifacts["subtask_frame_descriptions_list_list"].append(subtask_frame_descriptions_list)
+
+    rover_artifacts["gt_progress_list_list"].append(gt_progress_list)
+    rover_artifacts["final_progress_list_list"].append(final_progress_list)
+    rover_artifacts["frame_descriptions_list_list"].append(frame_descriptions_list)
 
 
-
-corr_list
-dist_list
-final_idx_list
-subtask_list_list
-subtask_progress_list_list
-subtask_frame_descriptions_list_list
-gt_progress_list_list
-final_progress_list_list
-
-
-res_df = pd.DataFrame({
-    'episode_dir': [x.split('/')[-1] for x in episode_dir_list],
-    'corr': progress_corr_list,
-    'dist': progress_dist_list,
-    'reasoning_error_rate': reasoning_error_rate_list,
-    'reasoning_success_rate': reasoning_success_rate_list,
-    'reasoning_inconclusive_rate': reasoning_inconclusive_rate_list,
-    'qa_accuracy': qa_accuracy_list,
-    'qa_precision': qa_precision_list,
-    'qa_recall': qa_recall_list,
-    'qa_frame_diff': qa_frame_diff_list
-})
-
-
+# -----------------------------
+# Results dataframe
+# -----------------------------
+res_df = pd.DataFrame(results)
 print(res_df)
